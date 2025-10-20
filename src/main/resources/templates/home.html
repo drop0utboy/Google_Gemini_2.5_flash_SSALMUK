@@ -1,0 +1,232 @@
+<!DOCTYPE html>
+<html lang="ko">
+
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Spring AI - Gemini Chat Demo</title>
+    <!-- Tailwind CSS 대신, 기존 코드에서 사용한 Bootstrap을 유지하며 필요한 스타일만 추가합니다. -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.5/dist/css/bootstrap.min.css" rel="stylesheet" />
+
+    <!-- 외부 파일이었던 /css/springai.css의 내용을 여기에 통합합니다. -->
+    <style>
+        /* 커스텀 스타일 정의 */
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #f7f7f9;
+        }
+
+        #headPanel {
+            background-color: #ffffff;
+            border-bottom: 1px solid #e0e0e0;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
+        }
+
+        .user-message {
+            background-color: #0d6efd; /* Primary blue for user */
+            color: white;
+            padding: 8px 12px;
+            border-radius: 18px 18px 0 18px;
+            max-width: 80%;
+            margin-left: auto;
+            margin-bottom: 10px;
+        }
+
+        .assistant-message {
+            background-color: #e9ecef; /* Light gray for assistant */
+            color: #343a40;
+            padding: 10px 14px;
+            border-radius: 18px 18px 18px 0;
+            max-width: 80%;
+            margin-right: auto;
+            margin-bottom: 10px;
+        }
+    </style>
+
+    <script>
+        // 외부 파일이었던 /js/springai.js의 내용을 여기에 통합합니다.
+        const springai = {
+            // 1. 사용자 질문을 대화 패널에 추가
+            addUserQuestion: function (question, containerId) {
+                const chatPanel = document.getElementById(containerId);
+                const userDiv = document.createElement('div');
+                userDiv.className = 'd-flex justify-content-end p-2';
+                userDiv.innerHTML = `
+                    <div class="user-message">
+                        ${question}
+                    </div>
+                `;
+                chatPanel.appendChild(userDiv);
+                document.getElementById("question").value = "";
+                chatPanel.scrollTop = chatPanel.scrollHeight;
+            },
+
+            // 2. 응답 대기 시 스피너 표시/숨김
+            setSpinner: function (spinnerId, visible) {
+                const spinner = document.getElementById(spinnerId);
+                if (visible) {
+                    spinner.classList.remove('d-none');
+                } else {
+                    spinner.classList.add('d-none');
+                }
+            },
+
+            // 3. 답변 텍스트가 들어갈 플레이스홀더를 추가하고 UUID 반환
+            addAnswerPlaceHolder: function (containerId) {
+                const uuid = 'msg-' + Date.now() + Math.random().toString(16).slice(2);
+                const chatPanel = document.getElementById(containerId);
+
+                const assistantDiv = document.createElement('div');
+                assistantDiv.className = 'd-flex justify-content-start p-2';
+                assistantDiv.innerHTML = `
+                    <div class="assistant-message" id="${uuid}">
+                        <span class="fw-bold text-success">🤖 Gemini: </span>
+                        <span class="message-content"></span>
+                    </div>
+                `;
+                chatPanel.appendChild(assistantDiv);
+                chatPanel.scrollTop = chatPanel.scrollHeight;
+                return uuid;
+            },
+
+            // 4. 스트리밍 응답을 받아서 플레이스홀더에 출력
+            printAnswerText: async function (stream, uuid) {
+                const placeholder = document.getElementById(uuid);
+                const contentSpan = placeholder.querySelector('.message-content');
+
+                if (!stream) {
+                    contentSpan.textContent = "응답 스트림을 받지 못했습니다. 서버 설정을 확인해주세요.";
+                    return;
+                }
+
+                // 스트리밍 리더를 사용하여 텍스트를 비동기적으로 읽어옵니다.
+                const reader = stream.getReader();
+                const decoder = new TextDecoder();
+                let fullText = '';
+
+                try {
+                    while (true) {
+                        const { done, value } = await reader.read();
+                        if (done) break;
+
+                        // 응답은 일반 텍스트이므로 바로 디코딩하여 추가합니다.
+                        const chunk = decoder.decode(value);
+                        fullText += chunk;
+                        contentSpan.textContent = fullText;
+                        
+                        // 스크롤을 최신 메시지로 이동
+                        const chatPanel = document.getElementById('chatPanel');
+                        chatPanel.scrollTop = chatPanel.scrollHeight;
+                    }
+                } catch (error) {
+                    console.error("Error reading stream:", error);
+                    contentSpan.textContent += "\n\n[스트리밍 오류 발생]";
+                }
+            }
+        };
+
+
+        // ##### 제출 버튼을 클릭했을 때 실행하는 함수 #####
+        async function handleSubmit() {
+            // 텍스트 질문을 얻고 대화 패널에 추가하기
+            const questionInput = document.getElementById("question");
+            const question = questionInput.value.trim();
+            if (question === "") return;
+
+            springai.addUserQuestion(question, "chatPanel");
+
+            try {
+                // 응답이 오기까지 스피너 보여주기
+                springai.setSpinner("spinner", true);
+                
+                // AI 모델 답변이 들어갈 위치를 대화 패널에 추가하고 UUID 받기
+                const uuid = springai.addAnswerPlaceHolder("chatPanel");
+
+                // AJAX 요청하고 응답받기
+                // Spring Controller는 MediaType.TEXT_PLAIN_VALUE로 응답하므로, 스트리밍 처리합니다.
+                const response = await fetch('/ai/chat', {
+                    method: "post",
+                    // Content-Type 헤더는 서버 컨트롤러의 consumes와 일치해야 합니다.
+                    headers: {
+                        'Content-Type': 'application/x-www-form-urlencoded',
+                        'Accept': 'text/plain'
+                    },          
+                    // body는 URLSearchParams를 사용하여 인코딩
+                    body: new URLSearchParams({ question })
+                });
+
+                if (!response.ok) {
+                    const errorText = await response.text();
+                    document.getElementById(uuid).querySelector('.message-content').textContent = 
+                        `[오류 발생]: ${response.status} ${response.statusText}\n${errorText}`;
+                    return;
+                }
+
+                // 텍스트 답변을 스트리밍으로 출력하기
+                // response.body는 ReadableStream입니다.
+                await springai.printAnswerText(response.body, uuid);
+
+            } catch (error) {
+                console.error("Fatal Error in handleSubmit:", error);
+                const lastMessage = document.getElementById('chatPanel').lastChild.querySelector('.message-content');
+                if (lastMessage) {
+                    lastMessage.textContent += `\n\n[통신 오류: 서버에 연결할 수 없습니다. 콘솔을 확인하세요.]`;
+                }
+            } finally {
+                //스피너 숨기기
+                springai.setSpinner("spinner", false);
+                questionInput.value = ""; // 입력창 비우기
+                questionInput.focus(); // 입력창에 포커스
+            }
+        } 
+        
+        // Enter 키 처리
+        window.onload = function() {
+            document.getElementById("question").addEventListener("keypress", function(event) {
+                if (event.key === "Enter") {
+                    event.preventDefault(); // 기본 Enter 동작(폼 제출) 방지
+                    handleSubmit();
+                }
+            });
+        };
+    </script>
+</head>
+
+<body>
+    <div class="d-flex flex-column vh-100">
+        <!-- 상단 헤더 패널 -->
+        <div id="headPanel" class="navbar justify-content-between p-3">
+            <a href="/" class="navbar-brand ps-2 fw-bold d-flex align-items-center" style="color: #4285F4;">
+                <!-- 로고 이미지를 텍스트와 아이콘으로 대체 -->
+                <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="me-2"><path d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20z"></path><path d="M12 7v5l3 3"></path></svg>
+                Spring AI + Gemini Chat
+            </a>
+            <div id="spinner" class="spinner-border text-success d-none me-3" role="status">
+                <span class="visually-hidden">Loading...</span>
+            </div>
+        </div>
+
+        <!-- 대화 패널 -->
+        <div id="chatPanel" class="flex-grow-1 container-fluid h-100 my-2" style="overflow-y:auto; overflow-x:hidden; padding-top: 10px;">
+            <!-- 초기 메시지 -->
+            <div class="d-flex justify-content-start p-2">
+                <div class="assistant-message" style="border-radius: 18px;">
+                    <span class="fw-bold text-success">🤖 Gemini: </span>
+                    <span class="message-content">질문을 올려주세요. 저는 ENTP처럼 답변하도록 설정되었습니다.</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- 입력 패널 -->
+        <div id="inputPanel" class="bg-white border-top">
+            <div class="input-group p-3">
+                <span class="input-group-text bg-primary text-white" style="font-weight: 500;">질문</span>
+                <input id="question" type="text" class="form-control" placeholder="여기에 질문을 입력하세요..." value="">
+                <button type="button" class="btn btn-primary" onclick="handleSubmit()">제출</button>
+            </div>
+        </div>
+    </div>
+</body>
+
+</html>
