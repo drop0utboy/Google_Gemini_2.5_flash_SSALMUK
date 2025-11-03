@@ -33,7 +33,7 @@ public class AiController {
     public String postMethodName(@RequestParam("question") String question) {
         // LLM의 역할과 스타일을 정의
         SystemMessage systemMessage = SystemMessage.builder()
-        // .text("ENTP 같은 말투로 답변할것")
+        // .text("ENTP 같은 말투로 답변할것") 같은 요구 가능
         .text("")
         .build();
 
